@@ -481,6 +481,7 @@ class Video(utils.Canopy):
                  division: int=4,
                  logger: Optional[utils.NTLogger]=None,
                  loop: Optional[asyncio.AbstractEventLoop]=None,
+                 cookie_jar: Optional[aiohttp.client.AbstractCookieJar]=None
                  ):
         """
         動画をダウンロードする。
@@ -494,7 +495,7 @@ class Video(utils.Canopy):
         :param loop: イベントループ
         """
         super().__init__(loop=loop, logger=logger)
-        self.session = self.loop.run_until_complete(self.get_session(mail, password))
+        self.session = self.loop.run_until_complete(self.get_session(mail, password, cookie_jar))
         self.commons = {
             DataKey.SESSION     : self.session,
             DataKey.LOGGER      : self.logger,
@@ -513,8 +514,11 @@ class Video(utils.Canopy):
             self.commons[DataKey.SESSION] = info.session
 
 
-    async def get_session(self, mail: str, password: str) -> aiohttp.ClientSession:
+    async def get_session(self, mail: str, password: str, cookie_jar: Optional[aiohttp.client.AbstractCookieJar]=None) -> aiohttp.ClientSession:
         cook = utils.LogIn(mail=mail, password=password).cookie
+        if cookie_jar:
+            for cookie in cookie_jar:
+                cook[cookie.key] = cookie.value
         return aiohttp.ClientSession(cookies=cook)
 
     def start(self):
@@ -596,7 +600,7 @@ class VideoSmile:
 
     async def _download(self, idx: int, video_id: str):
         division = self.division
-        file_path = utils.make_name(self.glossary, self.save_dir)
+        file_path = utils.make_name(self.glossary[video_id], self.save_dir)
 
         self.logger.info(Msg.nd_download_video.format(
             idx + 1, len(self.glossary), video_id, self.glossary[video_id][KeyDmc.TITLE]))
@@ -634,7 +638,9 @@ class VideoSmile:
         file_path = Path(f"{file_path}.{order:03}")
         # => video.mp4.000 ～ video.mp4.003 (4分割の場合)
         with file_path.open("wb") as fd:
-            async with self.session.get(url=video_url, headers=header) as video_data:
+            # Don't set timeout (default 5 min) for downloads
+            timeout = aiohttp.ClientTimeout(total=None, connect=60)
+            async with self.session.get(url=video_url, headers=header, timeout=timeout) as video_data:
                 self.logger.debug(f"Started! Header: {header}, Video URL: {video_url}")
                 while True:
                     data = await video_data.content.read(self.chunk_size)
@@ -665,14 +671,14 @@ class VideoSmile:
                 oldsize = newsize
                 await asyncio.sleep(interval)
 
-    def _combiner(self, coroutine: asyncio.Task):
+    def _combiner(self, video_id: str, coroutine: asyncio.Task):
         """
         ダウンロードが終わった後に分割したそれぞれを一つにまとめる関数。
 
         :param asyncio.Task coroutine: 動画をダウンロードしたタスク
         """
         if coroutine.done() and not coroutine.cancelled():
-            file_path = utils.make_name(self.glossary, self.save_dir)
+            file_path = utils.make_name(self.glossary[video_id], self.save_dir)
             file_names = [f"{file_path}.{order:03}" for order in range(self.division)]
             self.logger.debug(f"File names: {file_names}")
             with file_path.open("wb") as fd:
@@ -964,7 +970,9 @@ class VideoDmc:
         # => video.mp4.000 ～ video.mp4.003 (4分割の場合)
         self.logger.debug(file_path)
         with file_path.open("wb") as fd:
-            async with self.session.get(url=video_url, headers=header) as video_data:
+            # Don't set timeout (default 5 min) for downloads
+            timeout = aiohttp.ClientTimeout(total=None, connect=60)
+            async with self.session.get(url=video_url, headers=header, timeout=timeout) as video_data:
                 self.logger.debug(f"Started! Header: {header}, Video URL: {video_url}")
                 while True:
                     data = await video_data.content.read(self.chunk_size)
@@ -1337,7 +1345,9 @@ def main(args):
     logger = utils.NTLogger(log_level=log_level)
     destination = utils.get_dir(args.dest[0])
 
-    database = Info(videoid, mail=mailadrs, password=password, logger=logger).info
+    video_info = Info(videoid, mail=mailadrs, password=password, logger=logger)
+    database = video_info.info
+    session = video_info.session
 
     if len(database) == 0:
         return True
@@ -1350,6 +1360,6 @@ def main(args):
 
     if args.video:
         Video(videoids=database, save_dir=destination,
-              logger=logger, division=args.limit, multiline=args.nomulti, smile=args.smile).start()
+              logger=logger, division=args.limit, multiline=args.nomulti, smile=args.smile, cookie_jar=session.cookie_jar).start()
 
     return True

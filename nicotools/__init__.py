@@ -66,11 +66,13 @@ def main(arguments=None):
     group_two.add_argument("-e", "--export", action="count", help=Msg.ml_help_export)
     group_two.add_argument("--everything", action="store_true", help=Msg.ml_help_everything)
 
-    if len(sys.argv) <= 1:
+    arguments = globals().get("DEBUG_ARGS") or arguments or sys.argv[1:]
+
+    if not arguments or len(arguments) <= 1:
         parser.print_help()
         sys.exit()
 
-    args = parser.parse_args(globals().get("DEBUG_ARGS") or arguments)
+    args = parser.parse_args(arguments)
     if not (hasattr(args, "func") or int(os.getenv("PYTHON_TEST", 0))):
         parser.print_help()
         sys.exit()
@@ -85,4 +87,4 @@ def main(arguments=None):
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
